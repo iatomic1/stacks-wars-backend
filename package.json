@@ -8,6 +8,9 @@
   "peerDependencies": {
     "typescript": "^5.0.0"
   },
+  "scripts": {
+    "dev": "bun run src/index.ts"
+  },
   "dependencies": {
     "@types/express": "^5.0.1",
     "an-array-of-english-words": "^2.0.0",
@@ -16,3 +19,4 @@
     "socket.io": "^4.8.1"
   }
 }
+
