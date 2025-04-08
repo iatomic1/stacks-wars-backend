@@ -29,7 +29,24 @@ export const joinRoom =
 		try {
 			const data = await fetchLobbyFromNextJSApp(lobbyId);
 			const lobby = data.data;
+	(socket: Socket, io: Server) =>
+	async ({
+		lobbyId,
+		username,
+		userId,
+	}: {
+		lobbyId: string;
+		username: string;
+		userId: string;
+	}) => {
+		try {
+			const data = await fetchLobbyFromNextJSApp(lobbyId);
+			const lobby = data.data;
 
+			if (!lobby) {
+				socket.emit("error", { message: "Lobby not found" });
+				return;
+			}
 			if (!lobby) {
 				socket.emit("error", { message: "Lobby not found" });
 				return;
@@ -39,14 +56,25 @@ export const joinRoom =
 				socket.emit("error", { message: "Lobby is not joinable" });
 				return;
 			}
+			if (lobby.status !== "pending" && lobby.status !== "active") {
+				socket.emit("error", { message: "Lobby is not joinable" });
+				return;
+			}
 
+			const room = await getRoom(lobbyId);
 			const room = await getRoom(lobbyId);
 
 			// Check if this user is already in the room
 			const existingPlayerIndex = room?.players.findIndex(
 				(player) => player.id === userId
 			);
+			// Check if this user is already in the room
+			const existingPlayerIndex = room?.players.findIndex(
+				(player) => player.id === userId
+			);
 
+			if (existingPlayerIndex !== undefined && existingPlayerIndex >= 0) {
+				console.log(`${username} reconnected to lobby ${lobbyId}`);
 			if (existingPlayerIndex !== undefined && existingPlayerIndex >= 0) {
 				console.log(`${username} reconnected to lobby ${lobbyId}`);
 
@@ -55,10 +83,23 @@ export const joinRoom =
 					room.players[existingPlayerIndex].socketId = socket.id;
 					room.players[existingPlayerIndex].inactive = false; // Mark as active again
 					await saveRoom(room);
+				// Update the player's socket ID
+				if (room) {
+					room.players[existingPlayerIndex].socketId = socket.id;
+					room.players[existingPlayerIndex].inactive = false; // Mark as active again
+					await saveRoom(room);
 
 					// Join the socket to the room
 					socket.join(lobbyId);
+					// Join the socket to the room
+					socket.join(lobbyId);
 
+					// Emit events
+					socket.emit("roomJoined", {
+						roomId: lobbyId,
+						roomCode: lobbyId.substring(0, 6).toUpperCase(),
+						players: room.players,
+					});
 					// Emit events
 					socket.emit("roomJoined", {
 						roomId: lobbyId,
@@ -71,7 +112,15 @@ export const joinRoom =
 						roomCode: lobbyId.substring(0, 6).toUpperCase(),
 						players: room.players,
 					});
+					io.to(lobbyId).emit("playerJoined", {
+						roomId: lobbyId,
+						roomCode: lobbyId.substring(0, 6).toUpperCase(),
+						players: room.players,
+					});
 
+					return;
+				}
+			}
 					return;
 				}
 			}
@@ -81,9 +130,35 @@ export const joinRoom =
 				socket.emit("error", { message: "Lobby is full" });
 				return;
 			}
+			// Original code for new player joining
+			if (room && room.players.length >= lobby.maxPlayers) {
+				socket.emit("error", { message: "Lobby is full" });
+				return;
+			}
 
 			socket.join(lobbyId);
+			socket.join(lobbyId);
 
+			if (!room) {
+				const newRoom: GameRoom = {
+					id: lobbyId,
+					players: [
+						{
+							id: userId,
+							socketId: socket.id,
+							username,
+							score: 0,
+							isCurrentPlayer: false,
+							inactive: false,
+						},
+					],
+					currentPlayerIndex: 0,
+					lastActive: new Date(),
+					createdAt: new Date(),
+					rulesCompleted: 0,
+					timeLimit: 10,
+				};
+				await saveRoom(newRoom);
 			if (!room) {
 				const newRoom: GameRoom = {
 					id: lobbyId,
@@ -120,7 +195,28 @@ export const joinRoom =
 					inactive: false,
 				});
 				await saveRoom(room);
+				socket.emit("roomJoined", {
+					roomId: lobbyId,
+					roomCode: lobbyId.substring(0, 6).toUpperCase(),
+					players: newRoom.players,
+				});
+			} else {
+				room.players.push({
+					id: userId,
+					socketId: socket.id,
+					username,
+					score: 0,
+					isCurrentPlayer: false,
+					inactive: false,
+				});
+				await saveRoom(room);
 
+				socket.emit("roomJoined", {
+					roomId: lobbyId,
+					roomCode: lobbyId.substring(0, 6).toUpperCase(),
+					players: room.players,
+				});
+			}
 				socket.emit("roomJoined", {
 					roomId: lobbyId,
 					roomCode: lobbyId.substring(0, 6).toUpperCase(),
@@ -134,7 +230,19 @@ export const joinRoom =
 				roomCode: lobbyId.substring(0, 6).toUpperCase(),
 				players: updatedRoom?.players || [],
 			});
+			const updatedRoom = await getRoom(lobbyId);
+			io.to(lobbyId).emit("playerJoined", {
+				roomId: lobbyId,
+				roomCode: lobbyId.substring(0, 6).toUpperCase(),
+				players: updatedRoom?.players || [],
+			});
 
+			console.log(`${username} joined lobby ${lobbyId}`);
+		} catch (error) {
+			console.error(`Error joining lobby: ${error}`);
+			socket.emit("error", { message: "Failed to join lobby" });
+		}
+	};
 			console.log(`${username} joined lobby ${lobbyId}`);
 		} catch (error) {
 			console.error(`Error joining lobby: ${error}`);
@@ -151,13 +259,42 @@ export const startGame =
 				socket.emit("error", { message: "Lobby not found" });
 				return;
 			}
+	(socket: Socket, io: Server) =>
+	async ({ lobbyId, userId }: { lobbyId: string; userId: string }) => {
+		try {
+			const room = await getRoom(lobbyId);
+			if (!room) {
+				socket.emit("error", { message: "Lobby not found" });
+				return;
+			}
 
 			const lobby = await fetchLobbyFromNextJSApp(lobbyId);
 			if (!lobby) {
 				socket.emit("error", { message: "Lobby not found" });
 				return;
 			}
+			const lobby = await fetchLobbyFromNextJSApp(lobbyId);
+			if (!lobby) {
+				socket.emit("error", { message: "Lobby not found" });
+				return;
+			}
 
+			console.log(JSON.stringify(room.players));
+			console.log(userId);
+			const isHost = room.players[0]?.id === userId;
+			if (!isHost) {
+				socket.emit("error", {
+					message: "Only the host can start the game",
+				});
+				return;
+			}
+			const activePlayers = room.players.filter((p) => !p.inactive);
+			if (activePlayers.length < 1) {
+				socket.emit("error", {
+					message: "Not enough players to start the game",
+				});
+				return;
+			}
 			console.log(JSON.stringify(room.players));
 			console.log(userId);
 			const isHost = room.players[0]?.id === userId;
@@ -184,7 +321,22 @@ export const startGame =
 			room.usedWords = new Set();
 			room.rulesCompleted = 0;
 			room.timeLimit = 10;
+			const minWordLength = 4;
+			const randomLetter = getRandomLetter();
+			const rules = generateRules(minWordLength, randomLetter);
+			room.currentRule = rules[0];
+			room.currentRuleIndex = 0;
+			room.minWordLength = minWordLength;
+			room.usedWords = new Set();
+			room.rulesCompleted = 0;
+			room.timeLimit = 10;
 
+			const firstPlayerIndex = room.players.findIndex((p) => !p.inactive);
+			if (firstPlayerIndex !== -1) {
+				room.players.forEach((p) => {
+					p.isCurrentPlayer = false;
+					p.score = 0;
+				});
 			const firstPlayerIndex = room.players.findIndex((p) => !p.inactive);
 			if (firstPlayerIndex !== -1) {
 				room.players.forEach((p) => {
@@ -194,9 +346,28 @@ export const startGame =
 
 				room.players[firstPlayerIndex].isCurrentPlayer = true;
 				room.currentPlayerIndex = firstPlayerIndex;
+				room.players[firstPlayerIndex].isCurrentPlayer = true;
+				room.currentPlayerIndex = firstPlayerIndex;
 
 				await saveRoom(room);
+				await saveRoom(room);
 
+				io.to(lobbyId).emit("gameStarted", {
+					roomId: room.id,
+					roomCode: room.id.substring(0, 6).toUpperCase(),
+					currentRule: room.currentRule.rule,
+					timeLeft: room.timeLimit,
+					minWordLength: room.minWordLength,
+					rulesCompleted: 0,
+					currentPlayer: room.players[firstPlayerIndex].username,
+					players: room.players.map((p) => ({
+						id: p.id,
+
+						username: p.username,
+						score: p.score,
+						isCurrentPlayer: p.isCurrentPlayer,
+					})),
+				});
 				io.to(lobbyId).emit("gameStarted", {
 					roomId: room.id,
 					roomCode: room.id.substring(0, 6).toUpperCase(),
@@ -220,8 +391,32 @@ export const startGame =
 			socket.emit("error", { message: "Failed to start game" });
 		}
 	};
+				startPlayerTimer(lobbyId, io);
+			}
+		} catch (error) {
+			console.error(`Error starting game: ${error}`);
+			socket.emit("error", { message: "Failed to start game" });
+		}
+	};
 
 export const submitWord =
+	(socket: Socket, io: Server) =>
+	async ({
+		roomId,
+		word,
+		userId,
+	}: {
+		roomId: string;
+		word: string;
+		userId: string;
+	}) => {
+		try {
+			const room = await getRoom(roomId);
+			if (!room || !room.currentRule) {
+				socket.emit("error", { message: "Game not in progress" });
+				return;
+			}
+			console.log("submitted ", word);
 	(socket: Socket, io: Server) =>
 	async ({
 		roomId,
@@ -250,7 +445,25 @@ export const submitWord =
 				socket.emit("error", { message: "Not your turn" });
 				return;
 			}
+			const currentPlayerIndex = room.players.findIndex(
+				(p) => p.id === userId && p.isCurrentPlayer
+			);
+			if (
+				currentPlayerIndex === -1 ||
+				!room.players[currentPlayerIndex].isCurrentPlayer
+			) {
+				socket.emit("error", { message: "Not your turn" });
+				return;
+			}
 
+			if (word.length < (room.minWordLength || 4)) {
+				socket.emit("wordRejected", {
+					reason: `Word must be at least ${
+						room.minWordLength || 4
+					} letters long`,
+				});
+				return;
+			}
 			if (word.length < (room.minWordLength || 4)) {
 				socket.emit("wordRejected", {
 					reason: `Word must be at least ${
@@ -266,7 +479,17 @@ export const submitWord =
 				});
 				return;
 			}
+			if (room.usedWords && room.usedWords.has(word.toLowerCase())) {
+				socket.emit("wordRejected", {
+					reason: "This word was already used in this game",
+				});
+				return;
+			}
 
+			if (!isValidWord(word)) {
+				socket.emit("wordRejected", { reason: "Not a valid word" });
+				return;
+			}
 			if (!isValidWord(word)) {
 				socket.emit("wordRejected", { reason: "Not a valid word" });
 				return;
@@ -277,7 +500,16 @@ export const submitWord =
 				room.currentRule.rule.match(/'([a-z])'/i)?.[1] ||
 				getRandomLetter();
 			const rules = generateRules(room.minWordLength || 4, randomLetter);
+			// FIXED PART: Re-generate the validator function based on the rule
+			const randomLetter =
+				room.currentRule.rule.match(/'([a-z])'/i)?.[1] ||
+				getRandomLetter();
+			const rules = generateRules(room.minWordLength || 4, randomLetter);
 
+			// Find the matching rule by comparing rule text
+			const matchingRule = rules.find(
+				(r) => r.rule === room?.currentRule?.rule
+			);
 			// Find the matching rule by comparing rule text
 			const matchingRule = rules.find(
 				(r) => r.rule === room?.currentRule?.rule
@@ -289,9 +521,22 @@ export const submitWord =
 				});
 				return;
 			}
+			if (!matchingRule) {
+				socket.emit("error", {
+					message: "Invalid game state. Please restart the game.",
+				});
+				return;
+			}
 
 			const followsRule = matchingRule.validator(word.toLowerCase());
+			const followsRule = matchingRule.validator(word.toLowerCase());
 
+			if (!followsRule) {
+				socket.emit("wordRejected", {
+					reason: `Word does not follow the rule: ${room.currentRule.rule}`,
+				});
+				return;
+			}
 			if (!followsRule) {
 				socket.emit("wordRejected", {
 					reason: `Word does not follow the rule: ${room.currentRule.rule}`,
@@ -301,27 +546,73 @@ export const submitWord =
 
 			if (!room.usedWords) room.usedWords = new Set();
 			room.usedWords.add(word.toLowerCase());
+			if (!room.usedWords) room.usedWords = new Set();
+			room.usedWords.add(word.toLowerCase());
 
+			const points = calculateWordScore(word);
 			const points = calculateWordScore(word);
 
 			room.players[currentPlayerIndex].score += points;
+			room.players[currentPlayerIndex].score += points;
 
+			room.rulesCompleted = (room.rulesCompleted || 0) + 1;
 			room.rulesCompleted = (room.rulesCompleted || 0) + 1;
 
 			const newRule = getNextRule(room);
 			room.currentRule = newRule;
+			const newRule = getNextRule(room);
+			room.currentRule = newRule;
 
+			await saveRoom(room);
 			await saveRoom(room);
 
 			clearRoomTimer(roomId);
+			clearRoomTimer(roomId);
 
+			await moveToNextPlayer(roomId, io);
 			await moveToNextPlayer(roomId, io);
 
 			const updatedRoom = await getRoom(roomId);
 			if (!updatedRoom) return;
+			const updatedRoom = await getRoom(roomId);
+			if (!updatedRoom) return;
 
 			const newTimeLimit = calculateTimeLimit(updatedRoom);
+			const newTimeLimit = calculateTimeLimit(updatedRoom);
 
+			io.to(roomId).emit("wordSubmitted", {
+				roomId: updatedRoom.id,
+				roomCode: updatedRoom.id.substring(0, 6).toUpperCase(),
+				word,
+				points,
+				player: {
+					id: updatedRoom.players[currentPlayerIndex].id,
+
+					username: updatedRoom.players[currentPlayerIndex].username,
+					score: updatedRoom.players[currentPlayerIndex].score,
+				},
+				players: updatedRoom.players.map((p) => ({
+					id: p.id,
+					username: p.username,
+					score: p.score,
+					isCurrentPlayer: p.isCurrentPlayer,
+					eliminated: p.eliminated,
+					position: p.position,
+				})),
+				currentRule: newRule.rule,
+				rulesCompleted: updatedRoom.rulesCompleted,
+				timeLimit: newTimeLimit,
+				currentPlayer:
+					updatedRoom.players.find((p) => p.isCurrentPlayer)
+						?.username || "",
+			});
+		} catch (error) {
+			console.error(`Error submitting word: ${error}`);
+			socket.emit("error", {
+				message: "Failed to process word submission",
+			});
+		}
+	};
 			io.to(roomId).emit("wordSubmitted", {
 				roomId: updatedRoom.id,
 				roomCode: updatedRoom.id.substring(0, 6).toUpperCase(),
@@ -364,11 +655,30 @@ export const pauseGame =
 				socket.emit("error", { message: "Room not found" });
 				return;
 			}
+	(socket: Socket, io: Server) => async (roomId: string) => {
+		try {
+			const room = await getRoom(roomId);
+			if (!room) {
+				socket.emit("error", { message: "Room not found" });
+				return;
+			}
 
+			clearRoomTimer(roomId);
 			clearRoomTimer(roomId);
 
 			await saveRoom(room);
+			await saveRoom(room);
 
+			io.to(roomId).emit("gamePaused", {
+				roomId: room.id,
+				roomCode: room.id.substring(0, 6).toUpperCase(),
+				reason: "Game paused by host",
+			});
+		} catch (error) {
+			console.error(`Error pausing game: ${error}`);
+			socket.emit("error", { message: "Failed to pause game" });
+		}
+	};
 			io.to(roomId).emit("gamePaused", {
 				roomId: room.id,
 				roomCode: room.id.substring(0, 6).toUpperCase(),
@@ -383,7 +693,12 @@ export const pauseGame =
 export const handleDisconnect = (socket: Socket, io: Server) => async () => {
 	try {
 		console.log("Client disconnected:", socket.id);
+	try {
+		console.log("Client disconnected:", socket.id);
 
+		const socketRooms = Array.from(socket.rooms).filter(
+			(room) => room !== socket.id
+		);
 		const socketRooms = Array.from(socket.rooms).filter(
 			(room) => room !== socket.id
 		);
@@ -391,11 +706,19 @@ export const handleDisconnect = (socket: Socket, io: Server) => async () => {
 		for (const roomId of socketRooms) {
 			const room = await getRoom(roomId);
 			if (!room) continue;
+		for (const roomId of socketRooms) {
+			const room = await getRoom(roomId);
+			if (!room) continue;
 
 			const playerIndex = room.players.findIndex(
 				(p) => p.socketId === socket.id
 			);
+			const playerIndex = room.players.findIndex(
+				(p) => p.socketId === socket.id
+			);
 
+			if (playerIndex !== -1) {
+				room.players[playerIndex].inactive = true;
 			if (playerIndex !== -1) {
 				room.players[playerIndex].inactive = true;
 
@@ -407,9 +730,24 @@ export const handleDisconnect = (socket: Socket, io: Server) => async () => {
 					room.players[playerIndex].eliminated = true;
 					room.players[playerIndex].position = eliminatedCount + 1;
 				}
+				if (room.currentRule) {
+					// Calculate elimination position
+					const eliminatedCount = room.players.filter(
+						(p) => p.eliminated
+					).length;
+					room.players[playerIndex].eliminated = true;
+					room.players[playerIndex].position = eliminatedCount + 1;
+				}
 
 				await saveRoom(room);
+				await saveRoom(room);
 
+				if (
+					room.players[playerIndex].isCurrentPlayer &&
+					room.currentRule
+				) {
+					await moveToNextPlayer(roomId, io);
+				}
 				if (
 					room.players[playerIndex].isCurrentPlayer &&
 					room.currentRule
@@ -430,11 +768,35 @@ export const handleDisconnect = (socket: Socket, io: Server) => async () => {
 					})),
 					disconnectedPlayer: room.players[playerIndex].username,
 				});
+				io.to(roomId).emit("playerStatusUpdate", {
+					roomId: room.id,
+					players: room.players.map((p) => ({
+						id: p.id,
+						username: p.username,
+						score: p.score,
+						isCurrentPlayer: p.isCurrentPlayer,
+						inactive: p.inactive,
+						eliminated: p.eliminated,
+						position: p.position,
+					})),
+					disconnectedPlayer: room.players[playerIndex].username,
+				});
 
 				const activePlayers = room.players.filter(
 					(p) => !p.eliminated && !p.inactive
 				);
+				const activePlayers = room.players.filter(
+					(p) => !p.eliminated && !p.inactive
+				);
 
+				if (activePlayers.length === 0 && room.currentRule) {
+					await endGame(roomId, io);
+				}
+			}
+		}
+	} catch (error) {
+		console.error("Error handling disconnect:", error);
+	}
 				if (activePlayers.length === 0 && room.currentRule) {
 					await endGame(roomId, io);
 				}
