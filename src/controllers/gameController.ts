@@ -35,10 +35,11 @@ export const joinRoom =
 				return;
 			}
 
-			if (lobby.status !== "pending" && lobby.status !== "active") {
-				socket.emit("error", { message: "Lobby is not joinable" });
-				return;
-			}
+			//if (lobby.status !== "pending" && lobby.status !== "active") {
+			//	console.log("lobby is not joinable");
+			//	socket.emit("error", { message: "Lobby is not joinable" });
+			//	return;
+			//}
 
 			const room = await getRoom(lobbyId);
 
