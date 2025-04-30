@@ -119,8 +119,16 @@ export const getNextRule = (room: GameRoom): Rule => {
 
 	const letter = getRandomLetter();
 	const rules = generateRules(room.minWordLength || 4, letter);
+	const totalRounds = room.players.length * 2;
 
-	room.currentRuleIndex = (room.currentRuleIndex + 1) % rules.length;
+	const baseRuleIndex = Math.floor(room.currentRuleIndex / totalRounds);
 
-	return rules[room.currentRuleIndex];
+	if (baseRuleIndex >= rules.length) {
+		room.currentRuleIndex = 0;
+		room.minWordLength = (room.minWordLength || 4) + 2;
+		return rules[0];
+	}
+
+	room.currentRuleIndex++;
+	return rules[baseRuleIndex];
 };

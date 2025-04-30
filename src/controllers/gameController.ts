@@ -35,10 +35,11 @@ export const joinRoom =
 				return;
 			}
 
-			if (lobby.status !== "pending" && lobby.status !== "active") {
-				socket.emit("error", { message: "Lobby is not joinable" });
-				return;
-			}
+			//if (lobby.status !== "pending" && lobby.status !== "active") {
+			//	console.log("lobby is not joinable");
+			//	socket.emit("error", { message: "Lobby is not joinable" });
+			//	return;
+			//}
 
 			const room = await getRoom(lobbyId);
 
@@ -207,7 +208,6 @@ export const startGame =
 					currentPlayer: room.players[firstPlayerIndex].username,
 					players: room.players.map((p) => ({
 						id: p.id,
-
 						username: p.username,
 						score: p.score,
 						isCurrentPlayer: p.isCurrentPlayer,
@@ -330,7 +330,6 @@ export const submitWord =
 				points,
 				player: {
 					id: updatedRoom.players[currentPlayerIndex].id,
-
 					username: updatedRoom.players[currentPlayerIndex].username,
 					score: updatedRoom.players[currentPlayerIndex].score,
 				},
@@ -345,6 +344,7 @@ export const submitWord =
 				currentRule: newRule.rule,
 				rulesCompleted: updatedRoom.rulesCompleted,
 				timeLimit: newTimeLimit,
+				minWordLength: updatedRoom.minWordLength,
 				currentPlayer:
 					updatedRoom.players.find((p) => p.isCurrentPlayer)
 						?.username || "",
